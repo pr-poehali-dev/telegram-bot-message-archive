@@ -22,8 +22,9 @@ const bgMap: Record<string, string> = {
   amber: "bg-amber-400/10", red: "bg-red-400/10",
 };
 
-async function apiFetch(path: string, options?: RequestInit) {
-  const res = await fetch(`${API}${path}`, {
+async function apiFetch(action: string, options?: RequestInit, extra?: string) {
+  const qs = extra ? `?action=${action}&${extra}` : `?action=${action}`;
+  const res = await fetch(`${API}${qs}`, {
     headers: { "Content-Type": "application/json" },
     ...options,
   });
@@ -36,7 +37,7 @@ function Dashboard() {
 
   const load = useCallback(async () => {
     try {
-      const data = await apiFetch("/stats");
+      const data = await apiFetch("stats");
       setStats(data);
     } finally {
       setLoading(false);
@@ -168,7 +169,7 @@ function AutoResponse() {
   const [showForm, setShowForm] = useState(false);
 
   useEffect(() => {
-    apiFetch("/autoresponses").then(data => {
+    apiFetch("autoresponses").then(data => {
       if (Array.isArray(data)) setResponses(data);
       setLoading(false);
     });
@@ -176,20 +177,20 @@ function AutoResponse() {
 
   const toggle = async (item: Autoresponse) => {
     setResponses(r => r.map(x => x.id === item.id ? { ...x, active: !x.active } : x));
-    await apiFetch(`/autoresponses/${item.id}`, {
+    await apiFetch("autoresponses", {
       method: "PUT",
       body: JSON.stringify({ active: !item.active }),
-    });
+    }, `id=${item.id}`);
   };
 
   const remove = async (id: number) => {
     setResponses(r => r.filter(x => x.id !== id));
-    await apiFetch(`/autoresponses/${id}`, { method: "DELETE" });
+    await apiFetch("autoresponses", { method: "DELETE" }, `id=${id}`);
   };
 
   const add = async () => {
     if (!newTrigger.trim() || !newResponse.trim()) return;
-    const data = await apiFetch("/autoresponses", {
+    const data = await apiFetch("autoresponses", {
       method: "POST",
       body: JSON.stringify({ trigger: newTrigger.trim(), response: newResponse.trim(), type: newType }),
     });
@@ -305,7 +306,7 @@ function Messages() {
 
   useEffect(() => {
     setLoading(true);
-    apiFetch(`/messages?filter=${filter}`).then(data => {
+    apiFetch("messages", undefined, `filter=${filter}`).then(data => {
       if (Array.isArray(data)) setMessages(data);
       setLoading(false);
     });
@@ -393,8 +394,8 @@ function Admin() {
 
   useEffect(() => {
     Promise.all([
-      apiFetch("/settings"),
-      apiFetch("/bot-info"),
+      apiFetch("settings"),
+      apiFetch("bot-info"),
     ]).then(([s, b]) => {
       if (s && !s.error) setSettings(s);
       if (b?.result) setBotInfo(b.result);
@@ -408,14 +409,14 @@ function Admin() {
   };
 
   const save = async () => {
-    await apiFetch("/settings", { method: "PUT", body: JSON.stringify(settings) });
+    await apiFetch("settings", { method: "PUT", body: JSON.stringify(settings) });
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
 
   const setupWebhook = async () => {
     setWebhookStatus("setting");
-    const result = await apiFetch("/setup-webhook", {
+    const result = await apiFetch("setup-webhook", {
       method: "POST",
       body: JSON.stringify({ webhook_url: WEBHOOK_URL }),
     });

@@ -24,20 +24,47 @@ def err(msg, code=400):
     return {"statusCode": code, "headers": CORS, "body": json.dumps({"error": msg})}
 
 
+def ensure_seeded(cur):
+    cur.execute(f"SELECT COUNT(*) FROM {SCHEMA}.autoresponses")
+    if cur.fetchone()[0] == 0:
+        defaults = [
+            ("/start", "Привет! Я твой бот. Введи /help для списка команд.", "command", True),
+            ("/help", "Список доступных команд: /start, /help, /status", "command", True),
+            ("цена", "Для уточнения цены напишите нам в @support", "keyword", True),
+            ("/status", "Бот работает штатно \u2705", "command", True),
+        ]
+        for trigger, response, rtype, active in defaults:
+            cur.execute(
+                f"INSERT INTO {SCHEMA}.autoresponses (trigger, response, type, active) VALUES (%s, %s, %s, %s)",
+                (trigger, response, rtype, active)
+            )
+
+    cur.execute(f"SELECT COUNT(*) FROM {SCHEMA}.settings")
+    if cur.fetchone()[0] == 0:
+        defaults = [
+            ("delete_log", "true"), ("edit_log", "true"),
+            ("join_log", "false"), ("spam_filter", "true"), ("log_channel", ""),
+        ]
+        for key, value in defaults:
+            cur.execute(f"INSERT INTO {SCHEMA}.settings (key, value) VALUES (%s, %s)", (key, value))
+
+
 def handler(event: dict, context) -> dict:
-    """REST API для управления ботом: автоответы, настройки, статистика, сообщения."""
+    """REST API для управления ботом. Роутинг через ?action=... параметр."""
     if event.get("httpMethod") == "OPTIONS":
         return {"statusCode": 200, "headers": CORS, "body": ""}
 
     method = event.get("httpMethod", "GET")
-    path = event.get("path", "/").rstrip("/") or "/"
     params = event.get("queryStringParameters") or {}
+    action = params.get("action", "")
+    resource_id = params.get("id", "")
 
     conn = get_db()
     cur = conn.cursor()
+    ensure_seeded(cur)
 
     # --- СТАТИСТИКА ---
-    if path == "/stats" and method == "GET":
+    if action == "stats" and method == "GET":
         cur.execute(f"SELECT COUNT(*) FROM {SCHEMA}.messages WHERE event_type='message' AND created_at > NOW() - INTERVAL '24 hours'")
         msg_today = cur.fetchone()[0]
 
@@ -47,10 +74,6 @@ def handler(event: dict, context) -> dict:
         cur.execute(f"SELECT COUNT(*) FROM {SCHEMA}.messages WHERE event_type='deleted' AND created_at > NOW() - INTERVAL '24 hours'")
         deleted_today = cur.fetchone()[0]
 
-        cur.execute(f"SELECT COUNT(*) FROM {SCHEMA}.messages WHERE event_type='message' AND created_at > NOW() - INTERVAL '1 hour' ORDER BY created_at")
-        errors = 0
-
-        # Активность по часам (24 бара)
         cur.execute(f"""
             SELECT EXTRACT(HOUR FROM created_at) as h, COUNT(*) as cnt
             FROM {SCHEMA}.messages
@@ -60,34 +83,17 @@ def handler(event: dict, context) -> dict:
         activity_raw = {int(row[0]): int(row[1]) for row in cur.fetchall()}
         activity = [activity_raw.get(i, 0) for i in range(24)]
 
-        # Последние события
         cur.execute(f"""
             SELECT event_type, username, first_name, text, created_at
-            FROM {SCHEMA}.messages
-            ORDER BY created_at DESC LIMIT 10
+            FROM {SCHEMA}.messages ORDER BY created_at DESC LIMIT 10
         """)
-        events = []
-        for row in cur.fetchall():
-            events.append({
-                "type": row[0],
-                "username": row[1] or "",
-                "first_name": row[2] or "",
-                "text": (row[3] or "")[:80],
-                "time": row[4],
-            })
+        events = [{"type": r[0], "username": r[1] or "", "first_name": r[2] or "", "text": (r[3] or "")[:80], "time": r[4]} for r in cur.fetchall()]
 
         cur.close(); conn.close()
-        return ok({
-            "msg_today": msg_today,
-            "active_users": active_users,
-            "deleted_today": deleted_today,
-            "errors": errors,
-            "activity": activity,
-            "events": events,
-        })
+        return ok({"msg_today": msg_today, "active_users": active_users, "deleted_today": deleted_today, "errors": 0, "activity": activity, "events": events})
 
     # --- АВТООТВЕТЫ ---
-    if path == "/autoresponses":
+    if action == "autoresponses":
         if method == "GET":
             cur.execute(f"SELECT id, trigger, response, type, active FROM {SCHEMA}.autoresponses ORDER BY id")
             rows = [{"id": r[0], "trigger": r[1], "response": r[2], "type": r[3], "active": r[4]} for r in cur.fetchall()]
@@ -109,26 +115,24 @@ def handler(event: dict, context) -> dict:
             conn.commit(); cur.close(); conn.close()
             return ok({"id": new_id, "trigger": trigger, "response": response, "type": rtype, "active": True})
 
-    if path.startswith("/autoresponses/"):
-        rid = path.split("/")[-1]
-        if method == "PUT":
+        if method == "PUT" and resource_id:
             body = json.loads(event.get("body") or "{}")
             if "active" in body:
-                cur.execute(f"UPDATE {SCHEMA}.autoresponses SET active=%s WHERE id=%s", (body["active"], rid))
+                cur.execute(f"UPDATE {SCHEMA}.autoresponses SET active=%s WHERE id=%s", (body["active"], resource_id))
             if "trigger" in body:
-                cur.execute(f"UPDATE {SCHEMA}.autoresponses SET trigger=%s WHERE id=%s", (body["trigger"], rid))
+                cur.execute(f"UPDATE {SCHEMA}.autoresponses SET trigger=%s WHERE id=%s", (body["trigger"], resource_id))
             if "response" in body:
-                cur.execute(f"UPDATE {SCHEMA}.autoresponses SET response=%s WHERE id=%s", (body["response"], rid))
+                cur.execute(f"UPDATE {SCHEMA}.autoresponses SET response=%s WHERE id=%s", (body["response"], resource_id))
             conn.commit(); cur.close(); conn.close()
             return ok({"ok": True})
 
-        if method == "DELETE":
-            cur.execute(f"UPDATE {SCHEMA}.autoresponses SET active=FALSE WHERE id=%s", (rid,))
+        if method == "DELETE" and resource_id:
+            cur.execute(f"UPDATE {SCHEMA}.autoresponses SET active=FALSE WHERE id=%s", (resource_id,))
             conn.commit(); cur.close(); conn.close()
             return ok({"ok": True})
 
     # --- СООБЩЕНИЯ ---
-    if path == "/messages" and method == "GET":
+    if action == "messages" and method == "GET":
         event_filter = params.get("filter", "all")
         if event_filter == "deleted":
             where = "WHERE event_type='deleted'"
@@ -139,27 +143,19 @@ def handler(event: dict, context) -> dict:
 
         cur.execute(f"""
             SELECT id, username, first_name, text, original_text, event_type, created_at
-            FROM {SCHEMA}.messages
-            {where}
-            ORDER BY created_at DESC LIMIT 50
+            FROM {SCHEMA}.messages {where} ORDER BY created_at DESC LIMIT 50
         """)
         rows = []
         for r in cur.fetchall():
             display = r[3] or ""
             if r[4]:
-                display = f"{r[4]} → {r[3]}"
-            rows.append({
-                "id": r[0],
-                "user": f"@{r[1]}" if r[1] else (r[2] or "Аноним"),
-                "text": display[:120],
-                "type": r[5],
-                "time": r[6],
-            })
+                display = f"{r[4]} \u2192 {r[3]}"
+            rows.append({"id": r[0], "user": f"@{r[1]}" if r[1] else (r[2] or "Аноним"), "text": display[:120], "type": r[5], "time": r[6]})
         cur.close(); conn.close()
         return ok(rows)
 
     # --- НАСТРОЙКИ ---
-    if path == "/settings":
+    if action == "settings":
         if method == "GET":
             cur.execute(f"SELECT key, value FROM {SCHEMA}.settings")
             result = {row[0]: row[1] for row in cur.fetchall()}
@@ -177,13 +173,12 @@ def handler(event: dict, context) -> dict:
             return ok({"ok": True})
 
     # --- WEBHOOK SETUP ---
-    if path == "/setup-webhook" and method == "POST":
+    if action == "setup-webhook" and method == "POST":
         token = os.environ["TELEGRAM_BOT_TOKEN"]
         body = json.loads(event.get("body") or "{}")
         webhook_url = body.get("webhook_url", "")
         if not webhook_url:
             return err("webhook_url required")
-
         tg_url = f"https://api.telegram.org/bot{token}/setWebhook"
         data = json.dumps({"url": webhook_url}).encode()
         req = urllib.request.Request(tg_url, data=data, headers={"Content-Type": "application/json"})
@@ -193,7 +188,7 @@ def handler(event: dict, context) -> dict:
         return ok(result)
 
     # --- BOT INFO ---
-    if path == "/bot-info" and method == "GET":
+    if action == "bot-info" and method == "GET":
         token = os.environ["TELEGRAM_BOT_TOKEN"]
         tg_url = f"https://api.telegram.org/bot{token}/getMe"
         req = urllib.request.Request(tg_url)
