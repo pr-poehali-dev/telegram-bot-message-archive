@@ -1,5 +1,8 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import Icon from "@/components/ui/icon";
+
+const API = "https://functions.poehali.dev/043c5a49-b96e-4d3b-96c1-e155e1dd6457";
+const WEBHOOK_URL = "https://functions.poehali.dev/96ea724e-4886-467e-96d7-aeb5c523a935";
 
 type Tab = "dashboard" | "autoresponse" | "messages" | "admin";
 
@@ -10,80 +13,96 @@ const NAV_ITEMS: { id: Tab; label: string; icon: string }[] = [
   { id: "admin", label: "Настройки", icon: "Settings2" },
 ];
 
-const MOCK_STATS = [
-  { label: "Сообщений сегодня", value: "1 247", delta: "+12%", icon: "MessageCircle", color: "blue" },
-  { label: "Активных пользователей", value: "348", delta: "+5%", icon: "Users", color: "green" },
-  { label: "Удалённых сообщений", value: "23", delta: "−3%", icon: "Trash2", color: "amber" },
-  { label: "Ошибок бота", value: "0", delta: "чисто", icon: "ShieldCheck", color: "green" },
-];
-
-const MOCK_RESPONSES = [
-  { id: 1, trigger: "/start", type: "command", response: "Привет! Я твой бот. Введи /help для списка команд.", active: true },
-  { id: 2, trigger: "/help", type: "command", response: "Список доступных команд: /start, /help, /info, /status", active: true },
-  { id: 3, trigger: "цена", type: "keyword", response: "Для уточнения цены напишите нам в @support", active: true },
-  { id: 4, trigger: "скидка", type: "keyword", response: "Актуальные скидки на нашем сайте!", active: false },
-  { id: 5, trigger: "/status", type: "command", response: "Бот работает штатно ✅", active: true },
-];
-
-const MOCK_DELETED = [
-  { id: 1, user: "@alexkuznetsov", text: "Это сообщение было удалено", time: "14:32", type: "deleted" },
-  { id: 2, user: "@maria_ivanova", text: "Привет → Привет, как дела?", time: "13:58", type: "edited" },
-  { id: 3, user: "@test_user99", text: "Нехорошее слово", time: "12:10", type: "deleted" },
-  { id: 4, user: "@alexkuznetsov", text: "Ок → Окей, понял тебя", time: "11:44", type: "edited" },
-  { id: 5, user: "@new_member_42", text: "Первое сообщение было удалено", time: "10:03", type: "deleted" },
-];
-
 const colorMap: Record<string, string> = {
-  blue: "text-blue-400",
-  green: "text-emerald-400",
-  amber: "text-amber-400",
-  red: "text-red-400",
+  blue: "text-blue-400", green: "text-emerald-400",
+  amber: "text-amber-400", red: "text-red-400",
+};
+const bgMap: Record<string, string> = {
+  blue: "bg-blue-400/10", green: "bg-emerald-400/10",
+  amber: "bg-amber-400/10", red: "bg-red-400/10",
 };
 
-const bgMap: Record<string, string> = {
-  blue: "bg-blue-400/10",
-  green: "bg-emerald-400/10",
-  amber: "bg-amber-400/10",
-  red: "bg-red-400/10",
-};
+async function apiFetch(path: string, options?: RequestInit) {
+  const res = await fetch(`${API}${path}`, {
+    headers: { "Content-Type": "application/json" },
+    ...options,
+  });
+  return res.json();
+}
 
 function Dashboard() {
+  const [stats, setStats] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback(async () => {
+    try {
+      const data = await apiFetch("/stats");
+      setStats(data);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { load(); }, [load]);
+
+  const statCards = stats ? [
+    { label: "Сообщений сегодня", value: stats.msg_today.toLocaleString("ru"), icon: "MessageCircle", color: "blue" },
+    { label: "Активных пользователей", value: stats.active_users.toLocaleString("ru"), icon: "Users", color: "green" },
+    { label: "Удалённых сообщений", value: stats.deleted_today.toLocaleString("ru"), icon: "Trash2", color: "amber" },
+    { label: "Ошибок бота", value: "0", icon: "ShieldCheck", color: "green" },
+  ] : Array(4).fill(null);
+
+  const activity: number[] = stats?.activity || Array(24).fill(0);
+  const maxVal = Math.max(...activity, 1);
+
+  const eventIcon: Record<string, { icon: string; color: string; label: string }> = {
+    message: { icon: "MessageCircle", color: "blue", label: "написал" },
+    deleted: { icon: "Trash2", color: "amber", label: "удалил сообщение" },
+    edited: { icon: "Edit3", color: "amber", label: "изменил сообщение" },
+    join: { icon: "UserPlus", color: "green", label: "вступил в чат" },
+  };
+
   return (
     <div className="space-y-6 animate-fade-in">
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        {MOCK_STATS.map((s, i) => (
+        {statCards.map((s, i) => (
           <div key={i} className="rounded-lg border border-border bg-card p-4 flex flex-col gap-3">
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-muted-foreground tracking-wide uppercase">{s.label}</span>
-              <div className={`w-7 h-7 rounded-md flex items-center justify-center ${bgMap[s.color]}`}>
-                <Icon name={s.icon} size={14} className={colorMap[s.color]} />
-              </div>
-            </div>
-            <div className="flex items-end justify-between">
-              <span className="text-2xl font-semibold tracking-tight">{s.value}</span>
-              <span className={`text-xs font-mono-tg ${s.delta.startsWith("+") || s.delta === "чисто" ? "text-emerald-400" : "text-muted-foreground"}`}>
-                {s.delta}
-              </span>
-            </div>
+            {loading || !s ? (
+              <>
+                <div className="h-3 w-24 bg-secondary rounded animate-pulse" />
+                <div className="h-7 w-16 bg-secondary rounded animate-pulse" />
+              </>
+            ) : (
+              <>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-muted-foreground tracking-wide uppercase">{s.label}</span>
+                  <div className={`w-7 h-7 rounded-md flex items-center justify-center ${bgMap[s.color]}`}>
+                    <Icon name={s.icon} size={14} className={colorMap[s.color]} />
+                  </div>
+                </div>
+                <span className="text-2xl font-semibold tracking-tight">{s.value}</span>
+              </>
+            )}
           </div>
         ))}
       </div>
 
       <div className="rounded-lg border border-border bg-card overflow-hidden">
         <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-          <span className="text-sm font-medium">Активность бота</span>
+          <span className="text-sm font-medium">Активность за 24 часа</span>
           <div className="flex items-center gap-1.5">
-            <span className="status-dot bg-emerald-400"></span>
+            <span className="status-dot bg-emerald-400" />
             <span className="text-xs text-muted-foreground">онлайн</span>
           </div>
         </div>
         <div className="p-4">
           <div className="flex items-end gap-1 h-16">
-            {[4, 7, 5, 9, 12, 8, 15, 11, 6, 14, 10, 13, 9, 7, 11, 16, 8, 12, 5, 10, 13, 7, 9, 14].map((v, i) => (
+            {activity.map((v, i) => (
               <div
                 key={i}
                 className="flex-1 rounded-sm bg-blue-400/20 hover:bg-blue-400/40 transition-colors cursor-default"
-                style={{ height: `${(v / 16) * 100}%` }}
+                style={{ height: `${(v / maxVal) * 100}%`, minHeight: "2px" }}
+                title={`${String(i).padStart(2, "0")}:00 — ${v} сообщений`}
               />
             ))}
           </div>
@@ -96,51 +115,85 @@ function Dashboard() {
       </div>
 
       <div className="rounded-lg border border-border bg-card overflow-hidden">
-        <div className="px-4 py-3 border-b border-border">
+        <div className="px-4 py-3 border-b border-border flex items-center justify-between">
           <span className="text-sm font-medium">Последние события</span>
+          <button onClick={load} className="text-muted-foreground hover:text-foreground transition-colors">
+            <Icon name="RefreshCw" size={13} />
+          </button>
         </div>
         <div className="divide-y divide-border">
-          {[
-            { icon: "UserPlus", color: "green", text: "@new_user вступил в чат", time: "только что" },
-            { icon: "Trash2", color: "amber", text: "@alexkuznetsov удалил сообщение", time: "2 мин" },
-            { icon: "MessageSquareReply", color: "blue", text: "Автоответ на /start сработал", time: "5 мин" },
-            { icon: "Edit3", color: "amber", text: "@maria_ivanova изменила сообщение", time: "11 мин" },
-          ].map((e, i) => (
+          {loading && Array(4).fill(0).map((_, i) => (
             <div key={i} className="flex items-center gap-3 px-4 py-2.5">
-              <div className={`w-6 h-6 rounded flex items-center justify-center flex-shrink-0 ${bgMap[e.color]}`}>
-                <Icon name={e.icon} size={12} className={colorMap[e.color]} />
-              </div>
-              <span className="text-sm text-foreground flex-1">{e.text}</span>
-              <span className="text-xs text-muted-foreground font-mono-tg">{e.time}</span>
+              <div className="w-6 h-6 bg-secondary rounded animate-pulse" />
+              <div className="flex-1 h-3 bg-secondary rounded animate-pulse" />
             </div>
           ))}
+          {!loading && (!stats?.events || stats.events.length === 0) && (
+            <div className="py-8 text-center text-sm text-muted-foreground">Событий пока нет — напиши боту что-нибудь!</div>
+          )}
+          {!loading && stats?.events?.map((e: any, i: number) => {
+            const meta = eventIcon[e.type] || eventIcon.message;
+            const user = e.username ? `@${e.username}` : (e.first_name || "Аноним");
+            return (
+              <div key={i} className="flex items-center gap-3 px-4 py-2.5">
+                <div className={`w-6 h-6 rounded flex items-center justify-center flex-shrink-0 ${bgMap[meta.color]}`}>
+                  <Icon name={meta.icon} size={12} className={colorMap[meta.color]} />
+                </div>
+                <span className="text-sm text-foreground flex-1 truncate">
+                  <span className="text-blue-400 font-mono-tg">{user}</span> {meta.label}
+                  {e.text ? `: ${e.text.slice(0, 40)}` : ""}
+                </span>
+                <span className="text-xs text-muted-foreground font-mono-tg flex-shrink-0">
+                  {new Date(e.time).toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" })}
+                </span>
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>
   );
 }
 
+interface Autoresponse {
+  id: number; trigger: string; response: string; type: string; active: boolean;
+}
+
 function AutoResponse() {
-  const [responses, setResponses] = useState(MOCK_RESPONSES);
+  const [responses, setResponses] = useState<Autoresponse[]>([]);
+  const [loading, setLoading] = useState(true);
   const [newTrigger, setNewTrigger] = useState("");
   const [newResponse, setNewResponse] = useState("");
   const [newType, setNewType] = useState<"command" | "keyword">("command");
   const [showForm, setShowForm] = useState(false);
 
-  const toggle = (id: number) => {
-    setResponses(r => r.map(x => x.id === id ? { ...x, active: !x.active } : x));
+  useEffect(() => {
+    apiFetch("/autoresponses").then(data => {
+      if (Array.isArray(data)) setResponses(data);
+      setLoading(false);
+    });
+  }, []);
+
+  const toggle = async (item: Autoresponse) => {
+    setResponses(r => r.map(x => x.id === item.id ? { ...x, active: !x.active } : x));
+    await apiFetch(`/autoresponses/${item.id}`, {
+      method: "PUT",
+      body: JSON.stringify({ active: !item.active }),
+    });
   };
 
-  const remove = (id: number) => {
+  const remove = async (id: number) => {
     setResponses(r => r.filter(x => x.id !== id));
+    await apiFetch(`/autoresponses/${id}`, { method: "DELETE" });
   };
 
-  const add = () => {
+  const add = async () => {
     if (!newTrigger.trim() || !newResponse.trim()) return;
-    setResponses(r => [...r, {
-      id: Date.now(), trigger: newTrigger.trim(),
-      type: newType, response: newResponse.trim(), active: true,
-    }]);
+    const data = await apiFetch("/autoresponses", {
+      method: "POST",
+      body: JSON.stringify({ trigger: newTrigger.trim(), response: newResponse.trim(), type: newType }),
+    });
+    if (data.id) setResponses(r => [...r, data]);
     setNewTrigger(""); setNewResponse(""); setShowForm(false);
   };
 
@@ -206,9 +259,18 @@ function AutoResponse() {
 
       <div className="rounded-lg border border-border bg-card overflow-hidden">
         <div className="divide-y divide-border">
-          {responses.map(r => (
+          {loading && Array(3).fill(0).map((_, i) => (
+            <div key={i} className="flex items-center gap-3 px-4 py-3">
+              <div className="w-8 h-5 bg-secondary rounded-full animate-pulse" />
+              <div className="flex-1 space-y-1.5">
+                <div className="h-3 w-32 bg-secondary rounded animate-pulse" />
+                <div className="h-2.5 w-48 bg-secondary rounded animate-pulse" />
+              </div>
+            </div>
+          ))}
+          {!loading && responses.map(r => (
             <div key={r.id} className={`flex items-start gap-3 px-4 py-3 transition-opacity ${!r.active ? "opacity-50" : ""}`}>
-              <button onClick={() => toggle(r.id)} className="mt-0.5 flex-shrink-0">
+              <button onClick={() => toggle(r)} className="mt-0.5 flex-shrink-0">
                 <div
                   className={`relative rounded-full transition-colors ${r.active ? "bg-primary" : "bg-border"}`}
                   style={{ height: "18px", width: "32px" }}
@@ -238,7 +300,16 @@ function AutoResponse() {
 
 function Messages() {
   const [filter, setFilter] = useState<"all" | "deleted" | "edited">("all");
-  const filtered = MOCK_DELETED.filter(m => filter === "all" ? true : m.type === filter);
+  const [messages, setMessages] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setLoading(true);
+    apiFetch(`/messages?filter=${filter}`).then(data => {
+      if (Array.isArray(data)) setMessages(data);
+      setLoading(false);
+    });
+  }, [filter]);
 
   return (
     <div className="space-y-4 animate-fade-in">
@@ -265,10 +336,19 @@ function Messages() {
 
       <div className="rounded-lg border border-border bg-card overflow-hidden">
         <div className="divide-y divide-border">
-          {filtered.length === 0 && (
+          {loading && Array(3).fill(0).map((_, i) => (
+            <div key={i} className="flex items-center gap-3 px-4 py-3">
+              <div className="w-6 h-6 bg-secondary rounded-full animate-pulse" />
+              <div className="flex-1 space-y-1.5">
+                <div className="h-3 w-24 bg-secondary rounded animate-pulse" />
+                <div className="h-3 w-48 bg-secondary rounded animate-pulse" />
+              </div>
+            </div>
+          ))}
+          {!loading && messages.length === 0 && (
             <div className="py-12 text-center text-sm text-muted-foreground">Нет сообщений</div>
           )}
-          {filtered.map(m => (
+          {!loading && messages.map(m => (
             <div key={m.id} className="flex items-start gap-3 px-4 py-3">
               <div className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5 ${m.type === "deleted" ? "bg-red-400/10" : "bg-amber-400/10"}`}>
                 <Icon
@@ -286,7 +366,9 @@ function Messages() {
                 </div>
                 <p className="text-sm text-foreground">{m.text}</p>
               </div>
-              <span className="text-xs text-muted-foreground font-mono-tg flex-shrink-0">{m.time}</span>
+              <span className="text-xs text-muted-foreground font-mono-tg flex-shrink-0">
+                {new Date(m.time).toLocaleTimeString("ru", { hour: "2-digit", minute: "2-digit" })}
+              </span>
             </div>
           ))}
         </div>
@@ -295,7 +377,7 @@ function Messages() {
       <div className="rounded-lg border border-amber-400/20 bg-amber-400/5 px-4 py-3 flex items-start gap-3">
         <Icon name="Info" size={14} className="text-amber-400 mt-0.5 flex-shrink-0" />
         <p className="text-xs text-muted-foreground">
-          Для просмотра реальных удалённых сообщений бот должен быть администратором группы и иметь соответствующие разрешения.
+          Telegram не уведомляет о факте удаления сообщений через webhook. Изменённые сообщения фиксируются автоматически.
         </p>
       </div>
     </div>
@@ -303,26 +385,48 @@ function Messages() {
 }
 
 function Admin() {
-  const [botToken, setBotToken] = useState("7894512345:AAHxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx");
-  const [botName, setBotName] = useState("@my_awesome_bot");
-  const [logChannel, setLogChannel] = useState("-100123456789");
-  const [spamFilter, setSpamFilter] = useState(true);
-  const [deleteLog, setDeleteLog] = useState(true);
-  const [editLog, setEditLog] = useState(true);
-  const [joinLog, setJoinLog] = useState(false);
+  const [settings, setSettings] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(true);
+  const [botInfo, setBotInfo] = useState<any>(null);
+  const [webhookStatus, setWebhookStatus] = useState<"idle" | "setting" | "done" | "error">("idle");
   const [saved, setSaved] = useState(false);
 
-  const save = () => {
+  useEffect(() => {
+    Promise.all([
+      apiFetch("/settings"),
+      apiFetch("/bot-info"),
+    ]).then(([s, b]) => {
+      if (s && !s.error) setSettings(s);
+      if (b?.result) setBotInfo(b.result);
+      setLoading(false);
+    });
+  }, []);
+
+  const toggleSetting = (key: string) => {
+    const newVal = settings[key] === "true" ? "false" : "true";
+    setSettings(s => ({ ...s, [key]: newVal }));
+  };
+
+  const save = async () => {
+    await apiFetch("/settings", { method: "PUT", body: JSON.stringify(settings) });
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
 
+  const setupWebhook = async () => {
+    setWebhookStatus("setting");
+    const result = await apiFetch("/setup-webhook", {
+      method: "POST",
+      body: JSON.stringify({ webhook_url: WEBHOOK_URL }),
+    });
+    setWebhookStatus(result.ok ? "done" : "error");
+    setTimeout(() => setWebhookStatus("idle"), 3000);
+  };
+
   const Toggle = ({ value, onChange }: { value: boolean; onChange: () => void }) => (
     <button onClick={onChange}>
-      <div
-        className={`relative rounded-full transition-colors ${value ? "bg-primary" : "bg-border"}`}
-        style={{ width: "36px", height: "20px" }}
-      >
+      <div className={`relative rounded-full transition-colors ${value ? "bg-primary" : "bg-border"}`}
+        style={{ width: "36px", height: "20px" }}>
         <div className={`absolute top-[3px] w-[14px] h-[14px] rounded-full bg-white shadow transition-transform ${value ? "translate-x-[19px]" : "translate-x-[3px]"}`} />
       </div>
     </button>
@@ -337,37 +441,68 @@ function Admin() {
 
       <div className="rounded-lg border border-border bg-card overflow-hidden">
         <div className="px-4 py-3 border-b border-border">
-          <span className="text-sm font-medium">Подключение</span>
+          <span className="text-sm font-medium">Информация о боте</span>
         </div>
-        <div className="p-4 space-y-4">
-          <div className="space-y-1.5">
-            <label className="text-xs text-muted-foreground">Bot Token</label>
-            <div className="relative">
-              <input
-                type="password"
-                value={botToken}
-                onChange={e => setBotToken(e.target.value)}
-                className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm font-mono-tg outline-none focus:border-primary/60 pr-10"
-              />
-              <Icon name="Lock" size={13} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+        <div className="p-4">
+          {loading ? (
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-secondary rounded-full animate-pulse" />
+              <div className="space-y-2">
+                <div className="h-3 w-32 bg-secondary rounded animate-pulse" />
+                <div className="h-3 w-24 bg-secondary rounded animate-pulse" />
+              </div>
             </div>
+          ) : botInfo ? (
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
+                <Icon name="Bot" size={18} className="text-primary" />
+              </div>
+              <div>
+                <div className="text-sm font-medium">{botInfo.first_name}</div>
+                <div className="text-xs text-muted-foreground font-mono-tg">@{botInfo.username}</div>
+              </div>
+              <div className="ml-auto flex items-center gap-1.5">
+                <span className="status-dot bg-emerald-400" />
+                <span className="text-xs text-emerald-400">подключён</span>
+              </div>
+            </div>
+          ) : (
+            <div className="text-sm text-red-400">Не удалось получить данные бота. Проверьте токен.</div>
+          )}
+        </div>
+      </div>
+
+      <div className="rounded-lg border border-border bg-card overflow-hidden">
+        <div className="px-4 py-3 border-b border-border">
+          <span className="text-sm font-medium">Webhook — приём сообщений</span>
+        </div>
+        <div className="p-4 space-y-3">
+          <p className="text-xs text-muted-foreground">
+            Нажми кнопку, чтобы Telegram начал отправлять все сообщения боту. Это нужно сделать один раз.
+          </p>
+          <div className="flex items-center gap-2 p-2.5 rounded-md bg-secondary">
+            <Icon name="Link" size={12} className="text-muted-foreground flex-shrink-0" />
+            <span className="text-xs font-mono-tg text-muted-foreground truncate">{WEBHOOK_URL}</span>
           </div>
-          <div className="space-y-1.5">
-            <label className="text-xs text-muted-foreground">Username бота</label>
-            <input
-              value={botName}
-              onChange={e => setBotName(e.target.value)}
-              className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm font-mono-tg outline-none focus:border-primary/60"
+          <button
+            onClick={setupWebhook}
+            disabled={webhookStatus === "setting"}
+            className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+              webhookStatus === "done" ? "bg-emerald-400/10 text-emerald-400" :
+              webhookStatus === "error" ? "bg-red-400/10 text-red-400" :
+              "bg-primary text-primary-foreground hover:bg-primary/90"
+            }`}
+          >
+            <Icon
+              name={webhookStatus === "setting" ? "Loader2" : webhookStatus === "done" ? "CheckCircle" : "Zap"}
+              size={14}
+              className={webhookStatus === "setting" ? "animate-spin" : ""}
             />
-          </div>
-          <div className="space-y-1.5">
-            <label className="text-xs text-muted-foreground">ID канала для логов</label>
-            <input
-              value={logChannel}
-              onChange={e => setLogChannel(e.target.value)}
-              className="w-full bg-background border border-border rounded-md px-3 py-2 text-sm font-mono-tg outline-none focus:border-primary/60"
-            />
-          </div>
+            {webhookStatus === "idle" && "Активировать webhook"}
+            {webhookStatus === "setting" && "Настраиваю..."}
+            {webhookStatus === "done" && "Webhook активен!"}
+            {webhookStatus === "error" && "Ошибка, попробуй снова"}
+          </button>
         </div>
       </div>
 
@@ -377,35 +512,29 @@ function Admin() {
         </div>
         <div className="divide-y divide-border">
           {[
-            { label: "Лог удалённых сообщений", desc: "Записывать удалённые сообщения", value: deleteLog, onChange: () => setDeleteLog(!deleteLog) },
-            { label: "Лог изменённых сообщений", desc: "Фиксировать оригинальный текст", value: editLog, onChange: () => setEditLog(!editLog) },
-            { label: "Лог входа/выхода", desc: "Отслеживать вступление участников", value: joinLog, onChange: () => setJoinLog(!joinLog) },
-            { label: "Анти-спам фильтр", desc: "Автоматическое удаление спама", value: spamFilter, onChange: () => setSpamFilter(!spamFilter) },
-          ].map((item, i) => (
-            <div key={i} className="flex items-center justify-between px-4 py-3">
+            { key: "delete_log", label: "Лог удалённых сообщений", desc: "Записывать удалённые сообщения" },
+            { key: "edit_log", label: "Лог изменённых сообщений", desc: "Фиксировать оригинальный текст" },
+            { key: "join_log", label: "Лог входа/выхода", desc: "Отслеживать вступление участников" },
+            { key: "spam_filter", label: "Анти-спам фильтр", desc: "Автоматическое удаление спама" },
+          ].map((item) => (
+            <div key={item.key} className="flex items-center justify-between px-4 py-3">
               <div>
                 <div className="text-sm font-medium">{item.label}</div>
                 <div className="text-xs text-muted-foreground">{item.desc}</div>
               </div>
-              <Toggle value={item.value} onChange={item.onChange} />
+              <Toggle value={settings[item.key] === "true"} onChange={() => toggleSetting(item.key)} />
             </div>
           ))}
         </div>
       </div>
 
-      <div className="flex items-center gap-3">
-        <button
-          onClick={save}
-          className="flex items-center gap-2 px-5 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 transition-colors"
-        >
-          {saved ? <Icon name="Check" size={14} /> : <Icon name="Save" size={14} />}
-          {saved ? "Сохранено!" : "Сохранить настройки"}
-        </button>
-        <button className="flex items-center gap-2 px-4 py-2 bg-secondary text-secondary-foreground rounded-md text-sm hover:bg-secondary/80 transition-colors">
-          <Icon name="RefreshCw" size={14} />
-          Тест соединения
-        </button>
-      </div>
+      <button
+        onClick={save}
+        className="flex items-center gap-2 px-5 py-2 bg-primary text-primary-foreground rounded-md text-sm font-medium hover:bg-primary/90 transition-colors"
+      >
+        {saved ? <Icon name="Check" size={14} /> : <Icon name="Save" size={14} />}
+        {saved ? "Сохранено!" : "Сохранить настройки"}
+      </button>
     </div>
   );
 }
@@ -456,7 +585,7 @@ export default function Index() {
 
         <div className="p-3 border-t border-border">
           <div className="flex items-center gap-2 px-2 py-1.5 rounded-md bg-emerald-400/5 border border-emerald-400/20">
-            <span className="status-dot bg-emerald-400 flex-shrink-0"></span>
+            <span className="status-dot bg-emerald-400 flex-shrink-0" />
             <span className="text-xs text-emerald-400">Бот активен</span>
           </div>
         </div>

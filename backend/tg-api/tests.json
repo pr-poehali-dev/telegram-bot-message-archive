@@ -1,0 +1,12 @@
+{
+  "tests": [
+    {
+      "name": "Health check",
+      "method": "POST",
+      "path": "/",
+      "body": "{}",
+      "expectedStatus": 404,
+      "bodyMatcher": "partial"
+    }
+  ]
+}
